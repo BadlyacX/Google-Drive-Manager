@@ -1,10 +1,19 @@
 import tkinter as tk
 from tkinter import messagebox
+from tkinter import filedialog
 from functools import partial
 from googleapiclient.discovery import build
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.oauth2.credentials import Credentials
+from googleapiclient.http import MediaFileUpload
+import mimetypes
+import sys
 import os
+
+def resource_path(relative_path):
+    if hasattr(sys, '_MEIPASS'):
+        return os.path.join(sys._MEIPASS, relative_path)
+    return os.path.join(os.path.abspath("."), relative_path)
 
 SCOPES = ['https://www.googleapis.com/auth/drive']
 
@@ -22,30 +31,70 @@ class GoogleDriveDeleter:
 
         self.load_files()
 
-        delete_button = tk.Button(self.root, text="刪除所選", command=self.delete_selected)
-        delete_button.pack(pady=10)
-
         self.root.mainloop()
 
     def authenticate(self):
-        if os.path.exists('token.json'):
-            creds = Credentials.from_authorized_user_file('token.json', SCOPES)
+        from cryptography.fernet import Fernet
+        import json
+
+        if os.path.exists(resource_path('token.enc')):
+            key = b'eeqI_ghT_vw8-VR5ZU-bgmnBbkZcr7_QbDeKFvGidps='
+            fernet = Fernet(key)
+
+            with open(resource_path('token.enc'), 'rb') as f:
+                encrypted = f.read()
+                decrypted = fernet.decrypt(encrypted)
+                token_info = json.loads(decrypted.decode())
+
+                creds = Credentials.from_authorized_user_info(token_info, SCOPES)
         else:
-            flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
+            flow = InstalledAppFlow.from_client_secrets_file(resource_path('credentials.json'), SCOPES)
             creds = flow.run_local_server(port=0)
+
             with open('token.json', 'w') as token:
                 token.write(creds.to_json())
+
+            print("\n⚠️ 請執行 encrypt_token.py 將 token.json 加密後再重新執行本程式")
+            sys.exit(0)
+
         return creds
 
     def _on_mousewheel(self, event, canvas):
         canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
 
-    def load_files(self, parent_id=None, window=None, title="Google Drive 檔案管理器"):
+    def load_files(self, parent_id=None, window=None, title="Google Drive 檔案管理器", keyword=None):
+
         if window is None:
             window = self.root
 
         if window != self.root:
             window.geometry("600x500")
+
+        self.current_window = window
+        self.current_parent_id = parent_id
+
+        for widget in window.winfo_children():
+            widget.destroy()
+
+        if window == self.root:
+            search_frame = tk.Frame(window)
+            search_frame.pack(pady=5)
+
+            upload_frame = tk.Frame(window)
+            upload_frame.pack(pady=5)
+
+            self.search_var = tk.StringVar()
+            search_entry = tk.Entry(search_frame, textvariable=self.search_var, width=40)
+            search_entry.pack(side='left', padx=(0, 5))
+
+            search_button = tk.Button(search_frame, text="搜尋", command=self.search_files)
+            search_button.pack(side='left')
+
+            upload_btn = tk.Button(upload_frame, text="+ 上傳檔案", command=self.upload_files)
+            upload_btn.pack(side='left', padx=(0, 5))
+
+            folder_btn = tk.Button(upload_frame, text="+ 上傳資料夾", command=self.upload_folder)
+            folder_btn.pack(side='left')
 
         scroll_container = tk.Frame(window)
         scroll_container.pack(fill='both', expand=True)
@@ -56,9 +105,7 @@ class GoogleDriveDeleter:
 
         scrollable_frame.bind(
             "<Configure>",
-            lambda e: canvas.configure(
-                scrollregion=canvas.bbox("all")
-            )
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
         )
 
         canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
@@ -77,7 +124,14 @@ class GoogleDriveDeleter:
             pageSize=100
         ).execute()
 
-        self.files = result.get('files', [])
+        all_files = result.get('files', [])
+
+        if keyword:
+            keyword_lower = keyword.lower()
+            self.files = [f for f in all_files if keyword_lower in f['name'].lower()]
+        else:
+            self.files = all_files
+
         self.check_vars = []
         self.file_ids = []
 
@@ -112,6 +166,18 @@ class GoogleDriveDeleter:
             )
             del_btn.pack(side='left', padx=(10, 0))
 
+            if not is_folder:
+                download_btn = tk.Button(
+                frame,
+                text="下載",
+                command=partial(self.download_file, file['id'], file['name'])
+            )
+            download_btn.pack(side='left', padx=(10, 0))
+
+        if window == self.root:
+            delete_button = tk.Button(window, text="刪除所選", command=self.delete_selected)
+            delete_button.pack(pady=10)
+
     def open_folder(self, folder_id, folder_name):
         new_window = tk.Toplevel(self.root)
         new_window.title(folder_name)
@@ -140,8 +206,89 @@ class GoogleDriveDeleter:
         for widget in self.root.winfo_children():
             widget.destroy()
         self.load_files()
-        delete_button = tk.Button(self.root, text="刪除所選", command=self.delete_selected)
-        delete_button.pack(pady=10)
+
+    def search_files(self):
+        keyword = self.search_var.get().strip()
+        self.load_files(parent_id=self.current_parent_id, window=self.current_window, keyword=keyword)
+    
+    def download_file(self, file_id, name):
+        try:
+            file_path = filedialog.asksaveasfilename(title="下載檔案另存為", initialfile=name)
+            if not file_path:
+                return
+
+            request = self.service.files().get_media(fileId=file_id)
+            from googleapiclient.http import MediaIoBaseDownload
+            import io
+
+            fh = io.FileIO(file_path, mode='wb')
+            downloader = MediaIoBaseDownload(fh, request)
+
+            done = False
+            while not done:
+                status, done = downloader.next_chunk()
+
+            messagebox.showinfo("成功", f"檔案「{name}」已下載至：\n{file_path}")
+        except Exception as e:
+            messagebox.showerror("錯誤", f"無法下載檔案：{e}")
+
+    def upload_files(self):
+        file_paths = filedialog.askopenfilenames(title="選擇要上傳的檔案")
+        if not file_paths:
+            return
+
+        for path in file_paths:
+            filename = os.path.basename(path)
+            mime_type, _ = mimetypes.guess_type(path)
+            file_metadata = {
+                'name': filename,
+                'parents': [self.current_parent_id] if self.current_parent_id else []
+            }
+
+            media = MediaFileUpload(path, mimetype=mime_type, resumable=True)
+            try:
+                self.service.files().create(body=file_metadata, media_body=media).execute()
+            except Exception as e:
+                messagebox.showerror("錯誤", f"檔案「{filename}」上傳失敗：{e}")
+        messagebox.showinfo("成功", "所有檔案已上傳！")
+        self.refresh_main()
+
+    def upload_folder(self):
+        folder_path = filedialog.askdirectory(title="選擇要上傳的資料夾")
+        if not folder_path:
+            return
+
+        parent_id = self.current_parent_id or None
+        self._upload_folder_recursive(folder_path, parent_id)
+        messagebox.showinfo("完成", "資料夾上傳完成！")
+        self.refresh_main()
+
+    def _upload_folder_recursive(self, local_path, parent_drive_id):
+        folder_name = os.path.basename(local_path)
+        folder_metadata = {
+            'name': folder_name,
+            'mimeType': 'application/vnd.google-apps.folder',
+            'parents': [parent_drive_id] if parent_drive_id else []
+        }
+
+        folder = self.service.files().create(body=folder_metadata, fields='id').execute()
+        new_folder_id = folder.get('id')
+
+        for entry in os.listdir(local_path):
+            entry_path = os.path.join(local_path, entry)
+            if os.path.isdir(entry_path):
+                self._upload_folder_recursive(entry_path, new_folder_id)
+            else:
+                mime_type, _ = mimetypes.guess_type(entry_path)
+                file_metadata = {
+                    'name': os.path.basename(entry_path),
+                    'parents': [new_folder_id]
+                }
+                media = MediaFileUpload(entry_path, mimetype=mime_type, resumable=True)
+                try:
+                    self.service.files().create(body=file_metadata, media_body=media).execute()
+                except Exception as e:
+                    messagebox.showerror("錯誤", f"檔案「{entry_path}」上傳失敗：{e}")
 
 if __name__ == '__main__':
     GoogleDriveDeleter()
