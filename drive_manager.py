@@ -171,8 +171,8 @@ class GoogleDriveDeleter:
                 frame,
                 text="下載",
                 command=partial(self.download_file, file['id'], file['name'])
-            )
-            download_btn.pack(side='left', padx=(10, 0))
+                )
+                download_btn.pack(side='left', padx=(10, 0))
 
         if window == self.root:
             delete_button = tk.Button(window, text="刪除所選", command=self.delete_selected)
@@ -274,7 +274,9 @@ class GoogleDriveDeleter:
         folder = self.service.files().create(body=folder_metadata, fields='id').execute()
         new_folder_id = folder.get('id')
 
-        for entry in os.listdir(local_path):
+        entries = os.listdir(local_path)
+
+        for entry in entries:
             entry_path = os.path.join(local_path, entry)
             if os.path.isdir(entry_path):
                 self._upload_folder_recursive(entry_path, new_folder_id)
