@@ -38,7 +38,7 @@ class GoogleDriveDeleter:
         import json
 
         if os.path.exists(resource_path('token.enc')):
-            key = b'eeqI_ghT_vw8-VR5ZU-bgmnBbkZcr7_QbDeKFvGidps='
+            key = b'MKfuZvgSDTEniCDEHKb7Py1HFWiJFMTzGWWTkWaXgWs='
             fernet = Fernet(key)
 
             with open(resource_path('token.enc'), 'rb') as f:
@@ -87,7 +87,7 @@ class GoogleDriveDeleter:
             search_entry = tk.Entry(search_frame, textvariable=self.search_var, width=40)
             search_entry.pack(side='left', padx=(0, 5))
 
-            search_button = tk.Button(search_frame, text="搜尋", command=self.search_files)
+            search_button = tk.Button(search_frame, text="搜尋/刷新", command=self.search_files)
             search_button.pack(side='left')
 
             upload_btn = tk.Button(upload_frame, text="+ 上傳檔案", command=self.upload_files)
@@ -168,12 +168,11 @@ class GoogleDriveDeleter:
 
             if not is_folder:
                 download_btn = tk.Button(
-                frame,
-                text="下載",
-                command=partial(self.download_file, file['id'], file['name'])
+                    frame,
+                    text="下載",
+                    command=partial(self.download_file, file['id'], file['name'])
                 )
                 download_btn.pack(side='left', padx=(10, 0))
-
         if window == self.root:
             delete_button = tk.Button(window, text="刪除所選", command=self.delete_selected)
             delete_button.pack(pady=10)
@@ -294,3 +293,5 @@ class GoogleDriveDeleter:
 
 if __name__ == '__main__':
     GoogleDriveDeleter()
+
+# pyinstaller --windowed --onefile --add-data "credentials.json;." --add-data "token.enc;." drive_manager.py
