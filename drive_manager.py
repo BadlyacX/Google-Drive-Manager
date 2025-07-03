@@ -7,6 +7,7 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from google.oauth2.credentials import Credentials
 from googleapiclient.http import MediaFileUpload
 import mimetypes
+import threading
 import sys
 import os
 
@@ -211,6 +212,9 @@ class GoogleDriveDeleter:
         self.load_files(parent_id=self.current_parent_id, window=self.current_window, keyword=keyword)
     
     def download_file(self, file_id, name):
+        threading.Thread(target=self._download_file_worker, args=(file_id, name)).start()
+        
+    def _download_file_worker(self, file_id, name):
         try:
             file_path = filedialog.asksaveasfilename(title="下載檔案另存為", initialfile=name)
             if not file_path:
@@ -227,15 +231,17 @@ class GoogleDriveDeleter:
             while not done:
                 status, done = downloader.next_chunk()
 
-            messagebox.showinfo("成功", f"檔案「{name}」已下載至：\n{file_path}")
+            self.root.after(0, lambda: messagebox.showinfo("成功", f"檔案「{name}」已下載至：\n{file_path}"))
         except Exception as e:
-            messagebox.showerror("錯誤", f"無法下載檔案：{e}")
-
+            self.root.after(0, lambda: messagebox.showerror("錯誤", f"無法下載檔案：{e}"))
+    
     def upload_files(self):
         file_paths = filedialog.askopenfilenames(title="選擇要上傳的檔案")
         if not file_paths:
             return
+        threading.Thread(target=self._upload_files_worker, args=(file_paths,)).start()
 
+    def _upload_files_worker(self, file_paths):
         for path in file_paths:
             filename = os.path.basename(path)
             mime_type, _ = mimetypes.guess_type(path)
@@ -248,9 +254,10 @@ class GoogleDriveDeleter:
             try:
                 self.service.files().create(body=file_metadata, media_body=media).execute()
             except Exception as e:
-                messagebox.showerror("錯誤", f"檔案「{filename}」上傳失敗：{e}")
-        messagebox.showinfo("成功", "所有檔案已上傳！")
-        self.refresh_main()
+                self.root.after(0, lambda: messagebox.showerror("錯誤", f"檔案「{filename}」上傳失敗：{e}"))
+
+        self.root.after(0, lambda: messagebox.showinfo("成功", "所有檔案已上傳！"))
+        self.root.after(0, self.refresh_main)
 
     def upload_folder(self):
         folder_path = filedialog.askdirectory(title="選擇要上傳的資料夾")
