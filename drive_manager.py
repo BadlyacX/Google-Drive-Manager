@@ -1,4 +1,5 @@
 import tkinter as tk
+from tkinter import ttk
 from tkinter import messagebox
 from tkinter import filedialog
 from functools import partial
@@ -212,12 +213,40 @@ class GoogleDriveDeleter:
         self.load_files(parent_id=self.current_parent_id, window=self.current_window, keyword=keyword)
     
     def download_file(self, file_id, name):
-        threading.Thread(target=self._download_file_worker, args=(file_id, name)).start()
-        
-    def _download_file_worker(self, file_id, name):
+        file_path = filedialog.asksaveasfilename(title="下載檔案另存為", initialfile=name)
+        if not file_path:
+            return
+
+        download_progress_window = tk.Toplevel(self.root)
+        download_progress_window.title("檔案下載中...")
+
+        download_progress_var = tk.IntVar()
+        download_progress_bar = ttk.Progressbar(download_progress_window, length=300, maximum=100, variable=download_progress_var)
+        download_progress_bar.pack(padx=20, pady=10)
+
+        download_progress_window.update_idletasks()
+        width = download_progress_window.winfo_width()
+        height = download_progress_window.winfo_height()
+
+        screen_width = download_progress_window.winfo_screenwidth()
+        screen_height = download_progress_window.winfo_screenheight()
+
+        x = (screen_width // 2) - (width // 2)
+        y = (screen_height // 2) - (height // 2)
+
+        download_progress_window.geometry(f"+{x}+{y}")
+
+        download_progress_label = tk.Label(download_progress_window, text="0%")
+        download_progress_label.pack()
+
+        threading.Thread(target=self._download_file_worker, args=(
+            file_path, file_id, name, download_progress_window, download_progress_var, download_progress_label
+        )).start()
+
+    def _download_file_worker(self, file_path, file_id, name, download_progress_window, download_progress_var, download_progress_label):
         try:
-            file_path = filedialog.asksaveasfilename(title="下載檔案另存為", initialfile=name)
             if not file_path:
+                self.root.after(0, download_progress_window.destroy)
                 return
 
             request = self.service.files().get_media(fileId=file_id)
@@ -230,34 +259,88 @@ class GoogleDriveDeleter:
             done = False
             while not done:
                 status, done = downloader.next_chunk()
+                if status:
+                    percent = int(status.progress() * 100)
+                    self.root.after(0, lambda p=percent: self._update_progress_ui(p, download_progress_var, download_progress_label))
 
-            self.root.after(0, lambda: messagebox.showinfo("成功", f"檔案「{name}」已下載至：\n{file_path}"))
+            self.root.after(0, lambda: (
+            messagebox.showinfo("成功", f"檔案「{name}」已下載至：\n{file_path}"),
+            download_progress_window.destroy()
+        ))
+
         except Exception as e:
-            self.root.after(0, lambda: messagebox.showerror("錯誤", f"無法下載檔案：{e}"))
-    
+            self.root.after(0, lambda: (
+                messagebox.showerror("錯誤", f"下載失敗：{e}"),
+                download_progress_window.destroy()
+        ))
+
     def upload_files(self):
-        file_paths = filedialog.askopenfilenames(title="選擇要上傳的檔案")
-        if not file_paths:
+        file_path = filedialog.askopenfilenames(title="選擇要上傳的檔案")
+        if not file_path:
             return
-        threading.Thread(target=self._upload_files_worker, args=(file_paths,)).start()
+        
+        upload_progress_window = tk.Toplevel(self.root)
+        upload_progress_window.title("上傳檔案...")
 
-    def _upload_files_worker(self, file_paths):
-        for path in file_paths:
-            filename = os.path.basename(path)
-            mime_type, _ = mimetypes.guess_type(path)
-            file_metadata = {
-                'name': filename,
-                'parents': [self.current_parent_id] if self.current_parent_id else []
-            }
+        upload_progress_window.update_idletasks()
+        width = upload_progress_window.winfo_width()
+        height = upload_progress_window.winfo_height()
 
-            media = MediaFileUpload(path, mimetype=mime_type, resumable=True)
-            try:
-                self.service.files().create(body=file_metadata, media_body=media).execute()
-            except Exception as e:
-                self.root.after(0, lambda: messagebox.showerror("錯誤", f"檔案「{filename}」上傳失敗：{e}"))
+        upload_download_progress_var = tk.IntVar()
+        upload_download_progress_bar = ttk.Progressbar(upload_progress_window, length=300, maximum=100, variable=upload_download_progress_var)
+        upload_download_progress_bar.pack(padx=20, pady=10)
+
+        screen_width = upload_progress_window.winfo_screenwidth()
+        screen_height = upload_progress_window.winfo_screenheight()
+
+        x = (screen_width // 2) -(width // 2)
+        y = (screen_height // 2) - (height // 2)
+
+        upload_progress_window.geometry(f"+{x}+{y}")
+
+        upload_download_progress_label = tk.Label(upload_progress_window, text="0%")
+        upload_download_progress_label.pack()
+        
+        threading.Thread(target=self._upload_files_worker, args=(
+            file_path, upload_progress_window, upload_download_progress_var, upload_download_progress_label
+        )).start()
+
+    def _upload_files_worker(self, file_path, upload_progress_window, upload_download_progress_var, upload_download_progress_label):
+        try:
+            if not file_path:
+                self.root.after(0, upload_progress_window.destroy())
+                return
+        
+            for path in file_path:
+                filename = os.path.basename(path)
+                mime_type, _ = mimetypes.guess_type(path)
+                file_metadata = {
+                    'name': filename,
+                    'parents': [self.current_parent_id] if self.current_parent_id else []
+                }
+
+                media = MediaFileUpload(path, mimetype=mime_type, resumable=True)
+
+                request = self.service.files().create(body=file_metadata, media_body=media)
+
+                response = None
+                total_files = len(file_path)
+                for idx, path in enumerate(file_path):
+                    while response is None:
+                        status, response = request.next_chunk()
+                    
+                    percent_total = int(((idx + 1) / total_files) * 100)
+                    self.root.after(0, lambda p=percent_total: self._update_progress_ui(p, upload_download_progress_var, upload_download_progress_label))
+
+        except Exception as e:
+            self.root.after(0, lambda err=e: messagebox.showerror("錯誤", f"檔案「{filename}」上傳失敗：{err}"))
 
         self.root.after(0, lambda: messagebox.showinfo("成功", "所有檔案已上傳！"))
         self.root.after(0, self.refresh_main)
+
+    def _update_progress_ui(self, percent, var, label):
+        var.set(percent)
+        label.config(text=f"下載進度：{percent}%")
 
     def upload_folder(self):
         folder_path = filedialog.askdirectory(title="選擇要上傳的資料夾")
