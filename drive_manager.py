@@ -19,7 +19,7 @@ def resource_path(relative_path):
 
 SCOPES = ['https://www.googleapis.com/auth/drive']
 
-class GoogleDriveDeleter:
+class GoogleDriveManager:
     def __init__(self):
         self.creds = self.authenticate()
         self.service = build('drive', 'v3', credentials=self.creds)
@@ -382,6 +382,6 @@ class GoogleDriveDeleter:
                     messagebox.showerror("錯誤", f"檔案「{entry_path}」上傳失敗：{e}")
 
 if __name__ == '__main__':
-    GoogleDriveDeleter()
+    GoogleDriveManager()
 
 # pyinstaller --windowed --onefile --add-data "credentials.json;." --add-data "token.enc;." drive_manager.py
